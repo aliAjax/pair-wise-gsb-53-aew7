@@ -12,11 +12,16 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+TASK_RE = re.compile(r"^/api/evidence-tasks/(\d+)/(confirm|release|respond)$")
+CAPACITY_RE = re.compile(r"^/api/capacity$")
+EVIDENCE_TASKS_RE = re.compile(r"^/api/evidence-tasks$")
+POLICIES_RE = re.compile(r"^/api/policies$")
+BATCH_RE = re.compile(r"^/api/rfe-batches$")
 
 
 def make_handler(service: Any, static_dir: Path):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "immigration-deadline/1.0"
+        server_version = "immigration-deadline/1.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
@@ -27,6 +32,9 @@ def make_handler(service: Any, static_dir: Path):
             if not user_id or not role:
                 raise PermissionDenied("缺少X-User-Id或X-Role")
             return Actor(user_id=user_id, role=role, organization=self.headers.get("X-Org", ""))
+
+        def _idempotency_key(self) -> str:
+            return self.headers.get("Idempotency-Key", "").strip()
 
         def _body(self) -> Dict[str, Any]:
             try:
@@ -87,6 +95,25 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
+                if POLICIES_RE.match(parsed.path):
+                    self._send(200, {"items": service.list_policies(self._actor())})
+                    return
+                if CAPACITY_RE.match(parsed.path):
+                    query = parse_qs(parsed.query)
+                    handler_id = query.get("handler_id", [""])[0]
+                    day = int(query.get("day", ["0"])[0])
+                    self._send(200, service.get_capacity(self._actor(), handler_id, day))
+                    return
+                if EVIDENCE_TASKS_RE.match(parsed.path):
+                    query = parse_qs(parsed.query)
+                    record_id = query.get("record_id", [None])[0]
+                    self._send(200, {"items": service.list_tasks(
+                        self._actor(),
+                        record_id=int(record_id) if record_id is not None else None,
+                        handler_id=query.get("handler_id", [None])[0],
+                        status=query.get("status", [None])[0],
+                    )})
+                    return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
@@ -106,6 +133,34 @@ def make_handler(service: Any, static_dir: Path):
                         raise ValidationError("expected_version必须是整数")
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
+                    return
+                if POLICIES_RE.match(parsed.path):
+                    self._send(201, service.publish_policy(self._actor(), body.get("data", body)))
+                    return
+                if CAPACITY_RE.match(parsed.path):
+                    self._send(200, service.set_capacity(self._actor(), body.get("data", body), self._idempotency_key()))
+                    return
+                if EVIDENCE_TASKS_RE.match(parsed.path):
+                    self._send(201, service.reserve_evidence(self._actor(), body.get("data", body), self._idempotency_key()))
+                    return
+                if BATCH_RE.match(parsed.path):
+                    self._send(200, service.issue_rfe_batch(self._actor(), body.get("data", body), self._idempotency_key()))
+                    return
+                match = TASK_RE.match(parsed.path)
+                if match:
+                    task_id = int(match.group(1))
+                    sub = match.group(2)
+                    version = body.get("expected_version")
+                    if not isinstance(version, int):
+                        raise ValidationError("expected_version必须是整数")
+                    actor = self._actor()
+                    if sub == "confirm":
+                        result = service.confirm_task(actor, task_id, version, self._idempotency_key())
+                    elif sub == "release":
+                        result = service.release_task(actor, task_id, version)
+                    else:
+                        result = service.respond_task(actor, task_id, version, body.get("data", body), self._idempotency_key())
+                    self._send(200, result)
                     return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:

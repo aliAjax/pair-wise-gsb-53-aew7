@@ -16,7 +16,7 @@
 <main>
   <h1>移民案件期限与材料管理</h1>
   <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
+  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button><button id="policies">政策版本</button><button id="tasks">补件任务</button></div>
   <pre id="output">点击上方按钮读取服务状态。</pre>
 </main>
 <script>
@@ -28,6 +28,8 @@ async function show(path) {
 }
 document.getElementById("load").onclick = () => show("/api/records?limit=20");
 document.getElementById("stats").onclick = () => show("/api/stats");
+document.getElementById("policies").onclick = () => show("/api/policies");
+document.getElementById("tasks").onclick = () => show("/api/evidence-tasks");
 </script>
 </body>
 </html>

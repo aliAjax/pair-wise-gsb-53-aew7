@@ -56,6 +56,34 @@ class DomainRules:
             raise Conflict("当前状态不允许执行%s" % action)
         return allowed
 
+    def validate_policy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        p = dict(payload or {})
+        text(p, "version")
+        integer(p, "effective_day", 0)
+        integer(p, "evidence_days", 1, 365)
+        return {"version": p["version"].strip(), "effective_day": int(p["effective_day"]), "evidence_days": int(p["evidence_days"])}
+
+    def validate_evidence_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        p = dict(payload or {})
+        integer(p, "record_id", 1)
+        text(p, "handler_id")
+        integer(p, "day", 0)
+        text(p, "evidence_request")
+        return {"record_id": int(p["record_id"]), "handler_id": p["handler_id"].strip(), "day": int(p["day"]), "evidence_request": p["evidence_request"].strip()}
+
+    def validate_capacity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        p = dict(payload or {})
+        text(p, "handler_id")
+        integer(p, "day", 0)
+        integer(p, "capacity", 0)
+        return {"handler_id": p["handler_id"].strip(), "day": int(p["day"]), "capacity": int(p["capacity"])}
+
+    def validate_task_response(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        p = dict(payload or {})
+        integer(p, "response_day", 0)
+        text_list(p, "documents", 1)
+        return {"response_day": int(p["response_day"]), "documents": p["documents"]}
+
     def apply_action(self, record: Dict[str, Any], action: str, data: Dict[str, Any]) -> Tuple[str, Dict[str, Any], str]:
         new_state = self.require_transition(record, action)
         data = dict(data or {})
