@@ -3,31 +3,122 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>移民案件期限与材料管理</title>
+  <title>移民案件·补件名额与政策联动</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
-    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    main { max-width: 1080px; margin: auto; }
+    button { padding: .5rem .85rem; cursor: pointer; border: 1px solid #8aa0b4; border-radius: 6px; background: #fff; }
+    button.primary { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; min-height: 3rem; }
+    .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+    input, select { padding: .45rem .6rem; border: 1px solid #c2ccd6; border-radius: 6px; }
+    fieldset { border: 1px solid #d5dde5; border-radius: 10px; margin: 1rem 0; padding: .8rem 1rem; }
+    legend { font-weight: 600; padding: 0 .4rem; }
+    label { font-size: .85rem; color: #44505c; }
   </style>
 </head>
 <body>
 <main>
-  <h1>移民案件期限与材料管理</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <h1>移民案件 · 补件名额与政策版本联动</h1>
+  <p>案件—补件任务—承办容量—政策版本四域联动：发补件先预留名额，容量不足排队；政策更新后未回应任务失效重算，已回应保留原依据。</p>
+
+  <fieldset>
+    <legend>调用身份</legend>
+    <div class="row">
+      <label>用户 <input id="uid" value="demo-clerk"></label>
+      <label>角色
+        <select id="role">
+          <option value="clerk">clerk（书记员）</option>
+          <option value="case_officer">case_officer（承办人）</option>
+          <option value="supervisor">supervisor（主管）</option>
+          <option value="legal_rep">legal_rep（法律代表）</option>
+          <option value="intake_officer">intake_officer</option>
+        </select>
+      </label>
+      <label>机构 <input id="org" value="org-a"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>政策与容量（主管）</legend>
+    <div class="row">
+      <input id="pversion" placeholder="版本 p1" value="p1">
+      <input id="peff" type="number" placeholder="生效日" value="0" style="width:7rem">
+      <input id="pdays" type="number" placeholder="补件天数" value="10" style="width:8rem">
+      <button id="publish">发布政策（未回应任务失效重算）</button>
+      <button id="backfill">回填旧案件政策版本</button>
+    </div>
+    <div class="row">
+      <input id="officer" placeholder="承办人ID" value="off-li">
+      <input id="day" type="number" placeholder="日(day)" value="115" style="width:8rem">
+      <input id="cap" type="number" placeholder="当日名额" value="2" style="width:8rem">
+      <button id="setcap">设置当日容量（扩容自动放行排队）</button>
+      <button id="capview">查看名额占用</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>补件任务</legend>
+    <div class="row">
+      <input id="caseid" placeholder="案件ID" style="width:7rem">
+      <input id="req" placeholder="补件要求" value="补充收入证明">
+      <button class="primary" id="issue">发补件（预留名额/排队）</button>
+      <button id="tasks">查补件列表</button>
+    </div>
+    <div class="row">
+      <input id="taskid" placeholder="补件任务ID" style="width:9rem">
+      <button id="confirm">书记员确认名额</button>
+      <button id="release">放行名额</button>
+      <button id="respond">法律代表回应(第120天)</button>
+    </div>
+    <div class="row">
+      <input id="runkey" placeholder="批次run_key" value="batch-1" style="width:9rem">
+      <input id="batchids" placeholder="案件ID，逗号分隔，如 1,2,3" style="width:16rem">
+      <button id="batch">批量发补件（断点续跑）</button>
+    </div>
+  </fieldset>
+
+  <div class="row">
+    <button id="load">加载案件</button>
+    <button id="stats">状态统计</button>
+  </div>
+  <pre id="output">点击任意按钮查看返回。</pre>
 </main>
 <script>
-const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
-  const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+const $ = id => document.getElementById(id);
+function headers(jsonBody) {
+  const h = {"X-User-Id": $("uid").value.trim(), "X-Role": $("role").value, "X-Org": $("org").value.trim()};
+  if (jsonBody) h["Content-Type"] = "application/json";
+  return h;
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+async function call(method, path, body, idem) {
+  const opt = {method, headers: headers(body !== undefined)};
+  if (idem) opt.headers["Idempotency-Key"] = idem;
+  if (body !== undefined) opt.body = JSON.stringify(body);
+  const response = await fetch(path, opt);
+  const text = await response.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  $("output").textContent = "HTTP " + response.status + "\n" + JSON.stringify(data, null, 2);
+}
+$("publish").onclick = () => call("POST", "/api/policies", {version: $("pversion").value,
+  effective_day: Number($("peff").value), basis: {allowed_days: Number($("pdays").value)}});
+$("backfill").onclick = () => call("POST", "/api/policies/backfill", {});
+$("setcap").onclick = () => call("POST", "/api/capacity", {officer_id: $("officer").value,
+  day: Number($("day").value), capacity: Number($("cap").value)});
+$("capview").onclick = () => call("GET", `/api/capacity?officer_id=${encodeURIComponent($("officer").value)}&day=${$("day").value}`);
+$("issue").onclick = () => call("POST", `/api/records/${$("caseid").value}/supplements`,
+  {officer_id: $("officer").value, day: Number($("day").value), request: $("req").value},
+  "ui-issue-" + $("caseid").value);
+$("tasks").onclick = () => call("GET", "/api/supplements?day=" + $("day").value);
+$("confirm").onclick = () => call("POST", `/api/supplements/${$("taskid").value}/confirm`);
+$("release").onclick = () => call("POST", `/api/supplements/${$("taskid").value}/release`);
+$("respond").onclick = () => call("POST", `/api/supplements/${$("taskid").value}/respond`,
+  {response_day: 120, documents: ["income_proof"]});
+$("batch").onclick = () => call("POST", "/api/supplements/batch", {run_key: $("runkey").value,
+  items: $("batchids").value.split(",").map(s => s.trim()).filter(Boolean).map(id =>
+    ({record_id: Number(id), officer_id: $("officer").value, day: Number($("day").value), request: $("req").value}))});
+$("load").onclick = () => call("GET", "/api/records?limit=20");
+$("stats").onclick = () => call("GET", "/api/stats");
 </script>
 </body>
 </html>

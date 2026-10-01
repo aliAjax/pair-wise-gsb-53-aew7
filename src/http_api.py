@@ -3,7 +3,7 @@ import json
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .domain import Actor, DomainError, PermissionDenied, ValidationError
@@ -12,11 +12,13 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+SUPPLEMENT_SINGLE_RE = re.compile(r"^/api/supplements/(\d+)$")
+SUPPLEMENT_ACTION_RE = re.compile(r"^/api/supplements/(\d+)/([a-z_]+)$")
 
 
 def make_handler(service: Any, static_dir: Path):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "immigration-deadline/1.0"
+        server_version = "immigration-deadline/1.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:
             return
@@ -28,7 +30,10 @@ def make_handler(service: Any, static_dir: Path):
                 raise PermissionDenied("缺少X-User-Id或X-Role")
             return Actor(user_id=user_id, role=role, organization=self.headers.get("X-Org", ""))
 
-        def _body(self) -> Dict[str, Any]:
+        def _idem_key(self) -> str:
+            return self.headers.get("Idempotency-Key", "").strip()
+
+        def _body(self) -> dict:
             try:
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError as exc:
@@ -87,6 +92,28 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
+                if parsed.path == "/api/policies":
+                    self._send(200, {"items": service.list_policies(self._actor())})
+                    return
+                if parsed.path == "/api/capacity":
+                    query = parse_qs(parsed.query)
+                    officer_id = query.get("officer_id", [""])[0]
+                    day = query.get("day", ["0"])[0]
+                    self._send(200, service.capacity_view(self._actor(), officer_id, int(day)))
+                    return
+                if parsed.path == "/api/supplements":
+                    query = parse_qs(parsed.query)
+                    self._send(200, {"items": service.list_supplements(
+                        self._actor(),
+                        record_id=int(query["record_id"][0]) if "record_id" in query else None,
+                        status=query.get("status", [None])[0],
+                        officer_id=query.get("officer_id", [None])[0],
+                        day=int(query["day"][0]) if "day" in query else None)})
+                    return
+                match = SUPPLEMENT_SINGLE_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.get_supplement(self._actor(), int(match.group(1))))
+                    return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
@@ -107,6 +134,39 @@ def make_handler(service: Any, static_dir: Path):
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
                     return
+                if parsed.path == "/api/policies":
+                    self._send(201, service.publish_policy(self._actor(), body.get("data", body)))
+                    return
+                if parsed.path == "/api/policies/backfill":
+                    self._send(200, {"backfilled": service.backfill_policy_versions(self._actor())})
+                    return
+                if parsed.path == "/api/capacity":
+                    self._send(200, service.set_capacity(self._actor(), body.get("data", body)))
+                    return
+                supplement_issue = re.compile(r"^/api/records/(\d+)/supplements$").match(parsed.path)
+                if supplement_issue:
+                    data = body.get("data", body)
+                    if self._idem_key() and "idem_key" not in data:
+                        data["idem_key"] = self._idem_key()
+                    self._send(201, service.issue_supplement(
+                        self._actor(), int(supplement_issue.group(1)), data))
+                    return
+                if parsed.path == "/api/supplements/batch":
+                    self._send(200, service.issue_supplement_batch(self._actor(), body.get("data", body)))
+                    return
+                match = SUPPLEMENT_ACTION_RE.match(parsed.path)
+                if match:
+                    task_id = int(match.group(1))
+                    sub = match.group(2)
+                    if sub == "confirm":
+                        self._send(200, service.confirm_quota(self._actor(), task_id, self._idem_key()))
+                        return
+                    if sub == "respond":
+                        self._send(200, service.respond_supplement(self._actor(), task_id, body.get("data", body)))
+                        return
+                    if sub == "release":
+                        self._send(200, service.release_quota(self._actor(), task_id))
+                        return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
