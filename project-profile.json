@@ -1,0 +1,11 @@
+{
+  "projectId": "pair-wise-gsb-53",
+  "projectName": "pair-wise-gsb-53",
+  "category": "地狱 Python 模块化项目",
+  "businessDomain": "移民案件",
+  "projectForm": "完整项目",
+  "codeScope": "backend, frontend",
+  "languages": ["Python", "HTML", "CSS", "JavaScript"],
+  "summary": "移民案件期限与材料管理服务，覆盖法定天数、补件期限和材料完整性。",
+  "containerized": false
+}
